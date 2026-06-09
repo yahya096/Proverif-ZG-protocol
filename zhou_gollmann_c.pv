@@ -59,15 +59,17 @@ free f_SUB : flag.
 free f_CON : flag.
 free f_CON_B : flag.
 
-(* Queries *)
 
+
+(* Queries *)
+event error.
 event A_send_NRO(label).
-event B_receive_NRO.
+event B_receive_NRO(label).
 event B_send_NRR(label).
-event A_receive_NRR.
-event A_send_subK.
-event TTP_receive_subK.
-event TTP_send_conK_B.
+event A_receive_NRR(label).
+event A_send_subK(label, Nonce).
+event TTP_receive_subK(label, Nonce).
+event TTP_send_conK_B(label, Nonce).
 event B_receive_conK(label, Nonce).
 event TTP_send_conK_A.
 event A_receive_conK(label, Nonce).
@@ -75,17 +77,15 @@ event A_send_secret.
 event B_receive_secret.
 
 query attacker(secretA).
-query  inj-event(B_receive_secret) ==> inj-event(A_send_secret).
-query  L: label; inj-event(B_send_NRR(L)) ==> inj-event(A_send_NRO(L)).
-query  L: label; inj-event(A_receive_NRR) ==> inj-event(B_send_NRR(L)). 
-query  inj-event(TTP_receive_subK) ==> inj-event(A_send_subK).
-query  L: label, NA : Nonce; inj-event(A_receive_conK(L, NA)) ==> inj-event(TTP_send_conK_A). 
-query  L: label, NA : Nonce; inj-event(B_receive_conK(L, NA)) ==> inj-event(TTP_send_conK_B). 
-query  L: label, NA : Nonce; inj-event(B_receive_conK(L, NA)) ==> inj-event(TTP_receive_subK) && inj-event(TTP_send_conK_B) && inj-event(A_send_subK).
-query  L: label, NA : Nonce ; inj-event(A_receive_conK(L, NA)) ==> inj-event(B_receive_conK(L, NA)).
-
-
-
+query  L: label, NA : Nonce ; inj-event(B_receive_NRO(L)) && inj-event(B_receive_conK(L, NA)) && inj-event(TTP_receive_subK(L, NA)) ==> inj-event(A_send_NRO(L)) && inj-event(TTP_send_conK_B(L, NA)) && inj-event(A_send_subK(L, NA)).
+query event(error).
+query L: label, NA : Nonce; event(A_send_subK(L, NA)).
+query L: label;  inj-event(error) ==> inj-event(B_send_NRR(L)).
+query L: label ; inj-event(A_receive_NRR(L)).
+query L: label, NA : Nonce; inj-event(A_send_subK(L, NA)) ==> inj-event(B_send_NRR(L)). 
+query L: label; inj-event(B_send_NRR(L)) ==> inj-event(A_send_NRO(L)). 
+query L: label, NA : Nonce; inj-event(B_receive_conK(L, NA)) ==> inj-event(A_send_subK(L, NA)).
+query L: label, NA : Nonce ; inj-event(A_receive_conK(L, NA)) ==> inj-event(B_receive_conK(L, NA)).
 
 (* Process A *)
 
@@ -103,14 +103,16 @@ let processA(pkTTP: spkey, Bp_key: pkey, pkB: spkey, sskA: sskey)=
   let c_t = senc(secretA, K) in 
   event A_send_NRO(L);
   out(c, ((f_NRO, B, L, NA,c_t), sign((f_NRO, B, L, NA, c_t),sskA))); (* 1. *)
-  event A_send_secret;
   
   (* A receive msg from B *)
     
   in(c, (m: bitstring, ms: bitstring));
   let (=m) = checksign(ms, pkB) in 
-  let (=f_NRR, =A, =L, =NA) = m in
-  event A_receive_NRR;
+  let (=f_NRR, =A, L1 : label , =NA) = m in
+  if L1 = L then 
+  event A_receive_NRR(L)
+  else 
+  event error ;
 
   (* A send (m, s(m)) contain the key to TTP *)
   out(c, ((TTP, L, NA),sign((TTP, L, NA), sskA)));
@@ -119,12 +121,12 @@ let processA(pkTTP: spkey, Bp_key: pkey, pkB: spkey, sskA: sskey)=
   let(=A, =L, =NA, NTTP: Nonce) = m1 in
   
   let k = aenc(key_to_bitstring(K),Bp_key) in 
-  event A_send_subK;
+  event A_send_subK(L, NA);
   out(c,((f_SUB, B, L, NA, NTTP, k), sign((f_SUB, B, L, NA, NTTP,k),sskA)));
   
 
   (* A receive msg from TTP *)
- 
+  
   in(c, (m: bitstring, ms: bitstring));
   let(=m) = checksign(ms, pkTTP) in
   let(=f_CON, =A, =B, =L, =NA, =NTTP, =k) = m in 
@@ -146,11 +148,12 @@ let processA(pkTTP: spkey, Bp_key: pkey, pkB: spkey, sskA: sskey)=
   in(c, (m: bitstring, ms: bitstring));
   let(=m) = checksign(ms, pkA) in 
   let(=f_NRO, =B, =L, =NA, c_t: bitstring) = m in 
-  event B_receive_NRO;
+  event B_receive_NRO(L);
 
   (* B send NRR to A *) 
-  event B_send_NRR(L); 
-  out(c,((f_NRR, A, L, NA), sign((f_NRR, A, L, NA), sskB))); 
+ 
+   
+ 
 
 
   (* B receive K from TTP *)
@@ -181,11 +184,11 @@ let processA(pkTTP: spkey, Bp_key: pkey, pkB: spkey, sskA: sskey)=
   in(c, (m_A : bitstring, ms_A: bitstring)); 
   let (=m_A) =checksign(ms_A, pkA) in 
   let(=f_SUB, =B, =L, =NA, =NTTP, k: bitstring) = m_A in 
-  event TTP_receive_subK;
+  event TTP_receive_subK(L, NA);
   
   (* TTP send key to B *) 
 
-  event TTP_send_conK_B;
+  event TTP_send_conK_B(L, NA);
    
   out(c, ((f_CON_B, A, B, L, NA, NTTP, k),sign((f_CON_B, A, B, L, NA, NTTP, k),sskTTP)));
   in(c, (m_TTP: bitstring, ms_TTP: bitstring)); 
