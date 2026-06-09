@@ -1,0 +1,160 @@
+free c: channel.
+free secretA: bitstring [private].
+
+
+(* Public key encryption *)
+type pkey.
+type skey.
+
+fun pk(skey): pkey.
+fun aenc(bitstring, pkey): bitstring.
+
+reduc forall x:bitstring, y:skey; adec(aenc(x,pk(y)),y)=x.
+
+(* Signatures *)
+
+type spkey.
+type sskey.
+
+fun spk(sskey): spkey.
+fun sign(bitstring, sskey): bitstring.
+
+reduc forall x: bitstring , y: sskey; checksign(sign(x,y),spk(y)) = x.
+
+(* Shared key encryption *)
+
+type key.
+fun senc( bitstring , key ): bitstring. 
+
+reduc forall x: bitstring, y: key ; sdec(senc(x,y),y)=x.
+
+(* Type converter from key to bitstring *) 
+fun key_to_bitstring(key): bitstring [data,typeConverter].
+
+(* Agents *)
+
+type Agent.
+free A, B, TTP: Agent.
+
+(* Nonce *)
+
+type Nonce.
+
+(* flags *)
+
+type flag.
+
+free f_NRO : flag.
+free f_NRR : flag.
+free f_SUB : flag.
+free f_CON : flag.
+
+(* Queries *)
+
+event A_send_NRO.
+event B_receive_NRO.
+event B_send_NRR.
+event A_receive_NRR.
+event A_send_subK.
+event TTP_receive_subK.
+event TTP_send_conK_B.
+event B_receive_conK.
+event TTP_send_conK_A.
+event A_receive_conK.
+event A_send_secret.
+event B_receive_secret.
+
+query attacker(secretA).
+query inj-event(B_receive_secret) ==> inj-event(A_send_secret).
+
+
+(* Process A *)
+
+let processA(pkTTP: spkey, pkB: spkey, sskA: sskey)=
+  
+  (* A send (m,s(m)) to B *)
+ 
+  in(c, X: Agent);  
+  new L: Nonce;
+  new K: key;
+  
+  let c_t = senc(secretA, K) in 
+  event A_send_secret;
+  out(c, ((f_NRO, X, L, c_t), sign((f_NRO, X, L, c_t),sskA))); (* 1. *)
+  
+
+  (* A receive msg from B *)
+    
+  in(c, (m: bitstring, ms: bitstring));
+  let (=m) = checksign(ms, pkB) in 
+  let (f: flag, =A, =L ) = m in
+  event A_receive_NRR;
+
+  (* A send (m, s(m)) contain the key to TTP *)
+  out(c,((f_SUB, X, L, K), sign((f_SUB, X, L, K),sskA)));
+  event A_send_subK;
+
+  (* A receive msg from TTP *)
+ 
+  in(c, (m: bitstring, ms: bitstring));
+  let(=m) = checksign(ms, pkTTP) in
+  let(f:flag, =A, =X, =L, =K) = m in 
+  if X = B then 
+  event A_receive_conK.
+
+(* Process B*)
+
+ let processB(pkTTP: spkey, pkA: spkey, sskB: sskey) = 
+   
+  (* B receive msg from  A *)
+
+  in(c, (m: bitstring, ms: bitstring));
+  let(=m) = checksign(ms, pkA) in 
+  let(f: flag, =B, L: Nonce, c_t: bitstring) = m in 
+  event B_receive_NRO;
+  event B_receive_secret;
+  
+  (* B send NRR to A *) 
+  
+  out(c,((f_NRR, A, L), sign((f_NRR, A, L), sskB))); 
+  event B_send_NRR; 
+
+  (* B receive K from TTP *)
+  in(c, (m_TTP: bitstring, ms_TTP: bitstring)); 
+  let(=m_TTP) =  checksign(ms_TTP, pkTTP) in 
+  let(f: flag, Y: Agent, =B, =L, K: key) = m_TTP in
+  if Y = A then 
+  event B_receive_conK; 
+  let secret1 = sdec(c_t, K) in 
+  if secret1 = secretA then 
+  event B_receive_secret. 
+  
+(* Process TTP *) 
+
+  let processTTP(pkA : spkey, sskTTP : sskey) =  
+  
+  (* TTP receive msg from A *) 
+  
+  in(c, (m_A : bitstring, ms_A: bitstring)); 
+  let (=m_A) =checksign(ms_A, pkA) in 
+  let(f: flag, =B, L: Nonce, K: key) =m_A in 
+  event TTP_receive_subK;
+
+  (* TTP send key to B *) 
+
+  out(c, ((f_CON, A, B, L, K),sign((f_CON, A, B, L, K),sskTTP)));
+  event TTP_send_conK_B; 
+  
+  (* TTP send confirmation to A *) 
+
+  out(c, ((f_CON, A, B, L, K), sign((f_CON, A, B, L, K),sskTTP))); 
+  event TTP_send_conK_A.
+
+(* Main *) 
+
+process 
+  new sskA: sskey; let pkA= spk(sskA) in out(c, pkA); 
+  new sskB: sskey; let pkB= spk(sskB) in out(c, pkB); 
+  new sskTTP: sskey; let pkTTP= spk(sskTTP) in out(c, pkTTP); 
+ 
+( (!processA(pkTTP, pkB, sskA)) | (!processB(pkTTP, pkA, sskB)) | (!processTTP(pkA, sskTTP))) 
